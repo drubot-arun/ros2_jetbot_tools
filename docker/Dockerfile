@@ -13,7 +13,8 @@ RUN groupadd -g ${GROUP_ID} ${USERNAME} && \
     echo "${USERNAME}:${USERNAME}" | chpasswd && \
     adduser ${USERNAME} sudo && \
     (getent group video || groupadd -r video) && \
-    usermod -aG video ${USERNAME}
+    (getent group audio || groupadd -r audio) && \
+    usermod -aG video,audio ${USERNAME}
 
 
 # Change the ownership of the home directory to the new user
@@ -36,16 +37,30 @@ WORKDIR /test
 # Copy requirements.txt to the working directory
 COPY requirements.txt /test/requirements.txt
 
-# Update the package list and install PyKDL
+# Add this before any apt update commands
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | apt-key add -
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+# Update the package list and install PyKDL and audio tools
 RUN apt-get update && apt-get install -y \
     liborocos-kdl-dev \
-    python3-pykdl
+    python3-pykdl \
+    alsa-utils \
+    espeak-ng \
+    pulseaudio-utils \
+    kmod
 
 # Update the package list and install vi
 RUN apt-get install -y vim
 
 # Install any necessary dependencies
 RUN pip install --no-cache-dir -r /test/requirements.txt
+
+# Configure audio system - use HDA card (card 1) as default
+RUN echo 'pcm.!default {\n    type hw\n    card 1\n    device 0\n}\nctl.!default {\n    type hw\n    card 1\n}' > /etc/asound.conf
+
+# Create symlink for espeak
+RUN ln -sf /usr/bin/espeak-ng /usr/bin/espeak
 
 # Set PYTHONPATH environment variable for both users
 ENV PYTHONPATH=/opt/NanoLLM:/opt/clip_trt:/opt/NanoDB:$PYTHONPATH

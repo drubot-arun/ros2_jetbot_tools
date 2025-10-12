@@ -1,5 +1,5 @@
 #!/bin/bash
-# xhost +
+# Modified run.sh for detached mode with multiple terminal support
 
 # Get the user id and group id
 ROOT="$(dirname "$(readlink -f "$0")")"
@@ -14,19 +14,18 @@ ROS_DOMAIN_ID=7
 VOLUME_X11=/tmp/.X11-unix/:/tmp/.X11-unix:rw
 VOLUME_ROS_LOG=$HOME/.ros/log:/.ros/log
 
-
 # Define Docker volumes and environment variables
 ROOT=$(dirname "$0")
 DOCKER_VOLUMES="
 --volume=$VOLUME_X11 \
 --volume /tmp/argus_socket:/tmp/argus_socket \
 --volume=$ROOT/..:/ros2_ws/src/ros2_jetbot_tools \
+--volume=$ROOT/../jetbot_tools/data:/data \
+--volume=$ROOT/../../test:/ros2_ws/src/test \
 --volume=$VOLUME_ROS_LOG \
 --volume=/ros2_ws:/ros2_ws \
 --volume /tmp/pulse:/tmp/pulse \
---volume /dev/snd:/dev/snd \
 "
-
 
 DOCKER_ENV_VARS="
 --env DISPLAY=$DISPLAY_VAR \
@@ -35,9 +34,9 @@ DOCKER_ENV_VARS="
 --env PULSE_RUNTIME_PATH=/tmp/pulse \
 --env PULSE_COOKIE_DATA=/tmp/pulse/cookie \
 "
+
 # check for V4L2 devices
 V4L2_DEVICES=""
-
 for i in {0..9}
 do
     if [ -a "/dev/video$i" ]; then
@@ -47,22 +46,21 @@ done
 
 # check for I2C devices
 I2C_DEVICES=""
-
 for i in {0..9}
 do
     if [ -a "/dev/i2c-$i" ]; then
-        I2C_DEVICES="$I2C_DEVICES --device /dev/i2c-$i "
+        I2C_DEVICES="$V4L2_DEVICES --device /dev/i2c-$i "
     fi
 done
 
 DOCKER_DEVICES="
+--device /dev/snd \
 --device /dev/bus/usb \
 --device=/dev/input \
 "
 
 # extra flags
 EXTRA_FLAGS=""
-
 if [ -n "$HUGGINGFACE_TOKEN" ]; then
     EXTRA_FLAGS="$EXTRA_FLAGS --env HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN"
 fi
@@ -80,14 +78,21 @@ else
     SUDO="sudo"
 fi
 
-# Run the docker command
-# Check if the first input parameter is 'admin'
+# Run in detached mode
 if [ "$1" == "user" ]; then
-    $SUDO docker run --runtime nvidia -it --user $USER_ID:$GROUP_ID --rm --net host --ipc host \
+    CONTAINER_ID=$($SUDO docker run -d --runtime nvidia --user $USER_ID:$GROUP_ID --rm --net host --ipc host \
     ${DOCKER_ARGS} \
-    $DOCKER_IMAGE /bin/bash -c "cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && /bin/bash"
+    $DOCKER_IMAGE /bin/bash -c "cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && sleep infinity")
 else
-    $SUDO docker run --runtime nvidia -it --rm --net host --ipc host\
+    CONTAINER_ID=$($SUDO docker run -d --runtime nvidia --rm --net host --ipc host\
     ${DOCKER_ARGS} \
-    $DOCKER_IMAGE /bin/bash -c "cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && /bin/bash"
+    $DOCKER_IMAGE /bin/bash -c "cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && sleep infinity")
 fi
+
+echo "Container started with ID: $CONTAINER_ID"
+echo "To connect to the container, run:"
+echo "docker exec -it $CONTAINER_ID /bin/bash"
+echo ""
+echo "To stop the container, run:"
+echo "docker stop $CONTAINER_ID"
+
