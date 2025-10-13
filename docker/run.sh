@@ -25,6 +25,7 @@ DOCKER_VOLUMES="
 --volume=/ros2_ws:/ros2_ws \
 --volume /tmp/pulse:/tmp/pulse \
 --volume /dev/snd:/dev/snd \
+--volume /dev/shm:/dev/shm \
 "
 
 
@@ -81,13 +82,17 @@ else
 fi
 
 # Run the docker command
-# Check if the first input parameter is 'admin'
-if [ "$1" == "user" ]; then
-    $SUDO docker run --runtime nvidia -it --user $USER_ID:$GROUP_ID --rm --net host --ipc host \
+# Default is to run as jetbot user (UID 1000) for DDS compatibility
+# Use 'admin' or 'root' as first argument to run as root
+if [ "$1" == "admin" ] || [ "$1" == "root" ]; then
+    echo "Running as root user..."
+    $SUDO docker run --runtime nvidia -it --rm --net host --ipc host --pid host \
+    --user root \
     ${DOCKER_ARGS} \
     $DOCKER_IMAGE /bin/bash -c "cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && /bin/bash"
 else
-    $SUDO docker run --runtime nvidia -it --rm --net host --ipc host\
+    echo "Running as jetbot user (UID:GID = 1000:1000) for DDS compatibility..."
+    $SUDO docker run --runtime nvidia -it --rm --net host --ipc host --pid host \
     ${DOCKER_ARGS} \
-    $DOCKER_IMAGE /bin/bash -c "cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && /bin/bash"
+    $DOCKER_IMAGE /bin/bash -c "sudo chown -R jetbot:jetbot /ros2_ws 2>/dev/null || true && cd /ros2_ws && colcon build --symlink-install --packages-select jetbot_tools && source install/setup.bash && /bin/bash"
 fi

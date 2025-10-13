@@ -56,8 +56,8 @@ class llm_text_chat(Node):
         super().__init__('llm_text_chat')
 
         # Detect parameters
-        # meta-llama/Llama-2-7b-chat-hf  meta-llama/Meta-Llama-3-8B-Instruct
-        self.llm_model = self.declare_parameter('model', 'meta-llama/Llama-2-7b-chat-hf').get_parameter_value().string_value
+        # meta-llama/Llama-2-7b-chat-hf  meta-llama/Meta-Llama-3-8B-Instruct  microsoft/DialoGPT-medium
+        self.llm_model = self.declare_parameter('model', 'distilgpt2').get_parameter_value().string_value
         self.quantization = self.declare_parameter('quantization', 'q4f16_ft').get_parameter_value().string_value
         self.max_tokens = self.declare_parameter('max-new-tokens', 256).get_parameter_value().integer_value
         self.llm_chat = self.declare_parameter('llm_chat', True).get_parameter_value().bool_value
@@ -116,11 +116,15 @@ class llm_text_chat(Node):
         self.get_logger().info('NanoLLM load model: {} please wait')
         self.model = NanoLLM.from_pretrained(
             model=self.llm_model, 
-            quantization=self.quantization, 
-            api='mlc'
+            api='hf'  # Use HuggingFace API directly without quantization
         )
 
-        self.chat_history = ChatHistory(self.model, system_prompt="You are a helpful and friendly AI assistant.")
+        # DialoGPT uses simple chat template
+        try:
+            self.chat_history = ChatHistory(self.model)
+        except Exception as e:
+            self.get_logger().warn(f'ChatHistory error: {e}, using basic response mode')
+            self.chat_history = None
         self.llm_ready = True
         self.get_logger().info('Model: {} vidion:{} loaded successfully'.format(self.llm_model, self.model.has_vision))
 
@@ -134,34 +138,54 @@ class llm_text_chat(Node):
             prompt = msg.data.strip()
             self.get_logger().debug(f'[jetbot]>> {prompt}')
 
-            # Add user prompt and generate chat tokens/embeddings
-            self.chat_history.append('user', prompt)
-            embedding, position = self.chat_history.embed_chat()
+            try:
+                if self.chat_history is not None:
+                    # Use ChatHistory for proper chat context
+                    self.chat_history.append('user', prompt)
+                    embedding, position = self.chat_history.embed_chat()
 
-            # Generate bot reply
-            reply = self.model.generate(
-                embedding, 
-                streaming=True, 
-                kv_cache=self.chat_history.kv_cache,
-                stop_tokens=self.chat_history.template.stop,
-                max_new_tokens=self.max_tokens,  # Adjust as needed
-            )
+                    # Generate bot reply
+                    reply = self.model.generate(
+                        embedding, 
+                        streaming=True, 
+                        kv_cache=self.chat_history.kv_cache,
+                        stop_tokens=self.chat_history.template.stop,
+                        max_new_tokens=self.max_tokens,
+                    )
 
-            response = ""
-            for token in reply:
-                response += token
+                    response = ""
+                    for token in reply:
+                        response += token
 
-            # Remove special strings
-            response = re.sub(r'</?s>', '', response)
+                    # Remove special strings
+                    response = re.sub(r'</?s>', '', response)
 
-            # Save the final output
-            self.chat_history.append('bot', response)
-            self.get_logger().info(f'<<jetbot>>: {response}')
+                    # Save the final output
+                    self.chat_history.append('bot', response)
+                else:
+                    # Fallback: Direct generation without ChatHistory
+                    self.get_logger().info('Using direct generation (no chat history)')
+                    reply = self.model.generate(
+                        prompt, 
+                        streaming=True, 
+                        max_new_tokens=self.max_tokens,
+                    )
 
-            # Publish the response as a ROS2 message
-            response_msg = String()
-            response_msg.data = response
-            self.llm_publication.publish(response_msg)
+                    response = ""
+                    for token in reply:
+                        response += token
+                    
+                self.get_logger().info(f'<<jetbot>>: {response}')
+
+                # Publish the response as a ROS2 message
+                response_msg = String()
+                response_msg.data = response
+                self.llm_publication.publish(response_msg)
+                
+            except Exception as e:
+                self.get_logger().error(f'Error generating response: {e}')
+                import traceback
+                self.get_logger().error(traceback.format_exc())
         
         else:
             self.get_logger().info('Nano load mode is not ready! please wait')

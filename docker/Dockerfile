@@ -12,6 +12,7 @@ RUN groupadd -g ${GROUP_ID} ${USERNAME} && \
     useradd -u ${USER_ID} -g ${USERNAME} -m -s /bin/bash ${USERNAME} && \
     echo "${USERNAME}:${USERNAME}" | chpasswd && \
     adduser ${USERNAME} sudo && \
+    echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
     (getent group video || groupadd -r video) && \
     (getent group audio || groupadd -r audio) && \
     usermod -aG video,audio ${USERNAME}
@@ -26,6 +27,11 @@ chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/.cache
 
 # Change the ownership of /opt/jetson-inference, /ros2_workspace, /opt/NanoLLM, /opt/clip_trt, and /opt/NanoDB to the new user
 RUN chown -R ${USERNAME}:${USERNAME} /opt/jetson-inference /ros2_workspace /opt/NanoLLM /opt/clip_trt /opt/NanoDB
+
+# Create and set permissions for data directory (for model storage)
+RUN mkdir -p /data/models/huggingface && \
+    mkdir -p /data/models/mlc && \
+    chown -R ${USERNAME}:${USERNAME} /data
 
 
 # Create the working directory
@@ -57,7 +63,7 @@ RUN apt-get install -y vim
 RUN pip install --no-cache-dir -r /test/requirements.txt
 
 # Configure audio system - use HDA card (card 1) as default
-RUN echo 'pcm.!default {\n    type hw\n    card 1\n    device 0\n}\nctl.!default {\n    type hw\n    card 1\n}' > /etc/asound.conf
+RUN echo -e 'pcm.!default {\n    type hw\n    card 1\n    device 0\n}\nctl.!default {\n    type hw\n    card 1\n}' > /etc/asound.conf
 
 # Create symlink for espeak
 RUN ln -sf /usr/bin/espeak-ng /usr/bin/espeak
@@ -66,12 +72,17 @@ RUN ln -sf /usr/bin/espeak-ng /usr/bin/espeak
 ENV PYTHONPATH=/opt/NanoLLM:/opt/clip_trt:/opt/NanoDB:$PYTHONPATH
 
 
-# Set up the ROS2 workspace
-RUN mkdir -p /ros2_ws/src
+# Set up the ROS2 workspace and ensure proper permissions
+RUN mkdir -p /ros2_ws/src && \
+    chown -R ${USERNAME}:${USERNAME} /ros2_ws
+
 WORKDIR /ros2_ws/src
 
 # Set the default shell
 ENV SHELL=/bin/bash
+
+# Switch to the non-root user by default
+USER ${USERNAME}
 
 # Set the default command
 CMD ["/bin/bash"]
