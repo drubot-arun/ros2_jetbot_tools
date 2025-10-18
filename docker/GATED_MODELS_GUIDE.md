@@ -386,3 +386,6 @@ ros2 run jetbot_tools llm_chat_agent --ros-args \
 *You can debug and optimize model selection later. The infrastructure is ready!* ✅
 
 
+
+
+
